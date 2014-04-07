@@ -1,5 +1,8 @@
 package edu.sjsu.cmpe.library;
 
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,7 +35,7 @@ public class LibraryService extends Service<LibraryServiceConfiguration> {
     }
 
     @Override
-    public void run(LibraryServiceConfiguration configuration,
+    public void run(final LibraryServiceConfiguration configuration,
 	    Environment environment) throws Exception {
 	// This is how you pull the configurations from library_x_config.yml
 	String queueName = configuration.getStompQueueName();
@@ -40,15 +43,41 @@ public class LibraryService extends Service<LibraryServiceConfiguration> {
 	log.debug("{} - Queue name is {}. Topic name is {}",
 		configuration.getLibraryName(), queueName,
 		topicName);
+
 	// TODO: Apollo STOMP Broker URL and login
 
 	/** Root API */
 	environment.addResource(RootResource.class);
 	/** Books APIs */
-	BookRepositoryInterface bookRepository = new BookRepository();
-	environment.addResource(new BookResource(bookRepository));
+	final BookRepositoryInterface bookRepository = new BookRepository();
+	bookRepository.configure(configuration);
+
+	int numThreads = 1;
+	ExecutorService executor = Executors.newFixedThreadPool(numThreads);
+	
+	Runnable backgroundTask = new Runnable() {
+
+	    @Override
+	    public void run() {
+	    	while(true){
+	    	Listener listener = new Listener(configuration);
+	    	listener.listenService(bookRepository);
+	    	}
+	    }
+
+	};
+
+	System.out.println("About to submit the background task");
+	executor.execute(backgroundTask);
+	System.out.println("Submitted the background task");
+	//executor.shutdown();
+	System.out.println("Finished the background task");
+
+	//bookRepository.updateLibraryAfterResponse(Book receivedBook);
 
 	/** UI Resources */
+	environment.addResource(new BookResource(bookRepository));
+
 	environment.addResource(new HomeResource(bookRepository));
     }
 }

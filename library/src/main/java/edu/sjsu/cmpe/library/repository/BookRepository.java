@@ -9,6 +9,19 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 
+import javax.jms.Connection;
+import javax.jms.Destination;
+import javax.jms.JMSException;
+import javax.jms.MessageProducer;
+import javax.jms.Session;
+import javax.jms.TextMessage;
+
+import org.fusesource.stomp.jms.StompJmsConnectionFactory;
+import org.fusesource.stomp.jms.StompJmsDestination;
+
+import com.yammer.dropwizard.jersey.params.LongParam;
+
+import edu.sjsu.cmpe.library.config.LibraryServiceConfiguration;
 import edu.sjsu.cmpe.library.domain.Book;
 
 public class BookRepository implements BookRepositoryInterface {
@@ -17,6 +30,13 @@ public class BookRepository implements BookRepositoryInterface {
 
     /** Never access this key directly; instead use generateISBNKey() */
     private long isbnKey;
+    private String user = " ";
+    private String password = " ";
+    private String host = " ";
+    private int port = 0;
+    private String queueName = " ";
+    private String topicName = " ";
+    private String libraryName = " ";
 
     public BookRepository() {
 	bookInMemoryMap = seedData();
@@ -60,7 +80,8 @@ public class BookRepository implements BookRepositoryInterface {
 	// increment existing isbnKey and return the new value
 	return Long.valueOf(++isbnKey);
     }
-
+    
+  
     /**
      * This will auto-generate unique ISBN for new books.
      */
@@ -105,5 +126,75 @@ public class BookRepository implements BookRepositoryInterface {
     public void delete(Long isbn) {
 	bookInMemoryMap.remove(isbn);
     }
+    
+    public void configure(LibraryServiceConfiguration configuration){
+    	user = configuration.getApolloUser();
+    	password = configuration.getApolloPassword(); 
+    	host = configuration.getApolloHost();
+    	port =  configuration.getApolloPort(); 	 
+    	queueName = configuration.getStompQueueName();
+    	topicName = configuration.getStompTopicName();
+    	libraryName = configuration.getLibraryName();
+    }
+    
+    public void updateLibraryAfterResponse(Book newBook){
+    	Long isbn = newBook.getIsbn();
+    	List<Book> allBooks = getAllBooks();
+    	for(Book b1 : allBooks){
+    		if(b1.getIsbn() == isbn){
+    			b1.setStatus(Book.Status.available);
+    		}
+    		else
+    		{
+    			Book addedBook = addNewBook(newBook);    			
+    		}
+    	}
+    }
 
+    public Book addNewBook(Book newBook) {
+    	checkNotNull(newBook, "newBook instance must not be null");
+    	// Generate new ISBN
+    	//Long isbn = generateISBNKey();
+    	Long isbn =newBook.getIsbn();
+    	 newBook.setIsbn(newBook.getIsbn());
+    	// TODO: create and associate other fields such as author
+
+    	// Finally, save the new book into the map
+    	bookInMemoryMap.putIfAbsent(isbn, newBook);
+
+    	return newBook;
+        }
+
+
+	@Override
+	public void producer(LongParam isbn, Book book) throws JMSException {
+		// TODO Auto-generated method stub
+		String queue = queueName;
+    	String libName = libraryName;
+    	//String destination = queueName;
+
+    	StompJmsConnectionFactory factory = new StompJmsConnectionFactory();
+    	factory.setBrokerURI("tcp://" + host + ":" + port);
+
+    	Connection connection = factory.createConnection(user, password);
+    	try {
+			connection.start();
+		} catch (JMSException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+    	Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
+    	Destination dest = new StompJmsDestination(queue);
+    	MessageProducer producer = session.createProducer(dest);
+    //	producer.setDeliveryMode(DeliveryMode.NON_PERSISTENT);
+
+    	System.out.println("Sending messages to " + queue + "...");
+    	String data = libName + ":" + isbn;
+    	TextMessage msg = session.createTextMessage(data);
+    	msg.setLongProperty("id", System.currentTimeMillis());
+    	producer.send(msg);
+    	
+    	///queue/{last-5-digit-of-sjsu-id}.book.orders
+    }
 }
+
